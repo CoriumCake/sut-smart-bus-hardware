@@ -1,0 +1,67 @@
+/*
+ * SUT Smart Bus - ESP32-CAM Configuration
+ * ========================================
+ * 
+ * INSTRUCTIONS:
+ * 1. Copy this file to "config.h" in the same folder
+ * 2. Edit the values below with your actual credentials
+ * 3. Upload to ESP32-CAM
+ * 
+ * NOTE: config.h is gitignored to protect your credentials
+ */
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ============================================
+// WiFi Configuration
+// ============================================
+
+// Primary WiFi network (tried first)
+#define WIFI_SSID          "your_wifi_ssid"
+#define WIFI_PASSWORD      "your_wifi_password"
+
+// WiFi connection timeout in milliseconds
+#define WIFI_TIMEOUT_MS    10000
+
+// Fallback WiFi networks (optional)
+// Add your backup networks here
+#define WIFI_FALLBACK_1_SSID      "fallback_ssid_1"
+#define WIFI_FALLBACK_1_PASSWORD  "fallback_password_1"
+
+#define WIFI_FALLBACK_2_SSID      "fallback_ssid_2"
+#define WIFI_FALLBACK_2_PASSWORD  "fallback_password_2"
+
+// ============================================
+// MQTT Broker Configuration
+// ============================================
+
+// Primary MQTT server
+#define MQTT_SERVER        "192.168.1.100"
+#define MQTT_PORT          1883
+
+// Backup MQTT server (optional)
+#define MQTT_SERVER_BACKUP ""
+#define MQTT_PORT_BACKUP   1883
+
+// MQTT Topics (usually don't need to change)
+#define MQTT_TOPIC_DETECTION    "sut/person-detection"
+#define MQTT_TOPIC_STATUS       "sut/bus/ESP32-CAM-01/status"
+#define MQTT_TOPIC_RING         "sut/bus/ring"
+#define MQTT_CLIENT_ID          "BusCamStable"
+
+// ============================================
+// Device Configuration
+// ============================================
+
+// Device identifier
+#define DEVICE_ID          "ESP32-CAM-01"
+
+// NTP Server for time sync
+#define NTP_SERVER         "pool.ntp.org"
+
+// Timezone offset in seconds (GMT+7 = 7 * 3600 = 25200)
+#define GMT_OFFSET_SEC     25200
+#define DAYLIGHT_OFFSET    0
+
+#endif // CONFIG_H
