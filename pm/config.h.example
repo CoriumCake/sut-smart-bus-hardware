@@ -1,0 +1,63 @@
+// PM Sensor Module - Configuration Template
+// ==========================================
+// 
+// INSTRUCTIONS:
+// 1. Copy this file to "config.h" (in the same folder)
+// 2. Edit the values below with your settings
+// 3. Upload to your ESP32
+//
+// NOTE: config.h is gitignored to protect your credentials
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ===========================================
+// WiFi Settings
+// ===========================================
+#define WIFI_SSID     "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// ===========================================
+// MQTT Broker Settings
+// ===========================================
+#define MQTT_SERVER   "192.168.1.100"
+#define MQTT_PORT     1883
+#define MQTT_TOPIC    "sut/bus/gps"
+#define MQTT_TOPIC_FAST "sut/bus/gps/fast"
+
+// ===========================================
+// Bus Identification
+// ===========================================
+#define BUS_NAME      "SUT-BUS-01"
+#define WEB_NAME      "sutbus"
+
+// ===========================================
+// Hardware Pins
+// ===========================================
+// GPS Module (NEO-6M)
+#define GPS_RX_PIN    32
+#define GPS_TX_PIN    33
+
+// PM Sensor (PMS5003/7003)
+#define PMS_RX_PIN    16
+#define PMS_TX_PIN    17
+
+// DHT Sensor
+#define DHTPIN        14
+#define DHTTYPE       DHT11
+
+// SD Card
+#define SD_CS_PIN     5
+
+// I2C for RTC
+#define I2C_SDA       21
+#define I2C_SCL       22
+
+// ===========================================
+// Timing Configuration (milliseconds)
+// ===========================================
+#define INTERVAL_5S   5000   // MQTT publish interval
+#define INTERVAL_30S  30000  // SD card save interval
+#define GPS_INTERVAL  500    // Fast GPS publish interval
+
+#endif // CONFIG_H
