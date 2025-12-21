@@ -1,10 +1,16 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <HTTPUpdate.h>  // For HTTP-based OTA updates
 #include "FS.h"
 #include "SD_MMC.h"
 #include "time.h"
 #include "config.h"  // ⚠️ Create from config.h.example with your credentials
+
+// OTA update state
+bool otaPending = false;
+String otaUrl = "";
+String otaVersion = "";
 
 #define DETECT_LED 12
 #define BUZZER_PIN 13  // Buzzer on GPIO 13 - HIGH = beep, LOW = silent 
@@ -218,6 +224,42 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic).indexOf("ring") >= 0) {
     ringBell();
   }
+  
+  // Check for OTA update command
+  #ifdef OTA_ENABLED
+  if (String(topic).indexOf("ota") >= 0) {
+    // Parse JSON to get URL and version
+    // Simple parsing without ArduinoJson to save memory
+    int urlStart = message.indexOf("\"url\":\"");
+    int versionStart = message.indexOf("\"version\":\"");
+    
+    if (urlStart >= 0 && versionStart >= 0) {
+      urlStart += 7;  // Skip "url":"
+      int urlEnd = message.indexOf("\"", urlStart);
+      
+      versionStart += 11;  // Skip "version":"
+      int versionEnd = message.indexOf("\"", versionStart);
+      
+      if (urlEnd > urlStart && versionEnd > versionStart) {
+        otaUrl = message.substring(urlStart, urlEnd);
+        otaVersion = message.substring(versionStart, versionEnd);
+        
+        Serial.printf("📥 OTA Update requested: v%s\n", otaVersion.c_str());
+        Serial.printf("📥 Firmware URL: %s\n", otaUrl.c_str());
+        
+        // Check if we need to update (skip if same version unless forced)
+        bool forceUpdate = message.indexOf("\"force\":true") >= 0;
+        if (otaVersion == FIRMWARE_VERSION && !forceUpdate) {
+          Serial.println("ℹ️ Already on this version, skipping update");
+          return;
+        }
+        
+        // Set flag to perform OTA in main loop (not in callback!)
+        otaPending = true;
+      }
+    }
+  }
+  #endif
 }
 
 // Function to save image to SD card - accepts frame buffer and bounding box
@@ -506,6 +548,13 @@ void loop() {
   if (wifiConnected) {
     if (!mqttClient.connected()) reconnectMQTT();
     mqttClient.loop();
+    
+    // Check if OTA update is pending
+    #ifdef OTA_ENABLED
+    if (otaPending) {
+      performOTA();
+    }
+    #endif
   }
 
   camera_fb_t * fb = esp_camera_fb_get();
@@ -646,8 +695,112 @@ void reconnectMQTT() {
     mqttClient.subscribe(MQTT_TOPIC_RING);
     mqttClient.subscribe("sut/bus/+/ring");  // Also listen for bus-specific ring
     Serial.println("🔔 Subscribed to ring topics");
+    
+    // Subscribe to OTA topic
+    #ifdef OTA_ENABLED
+    mqttClient.subscribe(MQTT_TOPIC_OTA);
+    Serial.printf("📥 Subscribed to OTA topic: %s\n", MQTT_TOPIC_OTA);
+    Serial.printf("📌 Current firmware version: %s\n", FIRMWARE_VERSION);
+    #endif
   } else {
     Serial.println("❌ MQTT Failed, trying next server");
     currentMqttIndex = (currentMqttIndex + 1) % mqttServerCount;
   }
 }
+
+// =============================================================================
+// OTA (Over-The-Air) Update Functions
+// =============================================================================
+
+#ifdef OTA_ENABLED
+void performOTA() {
+  otaPending = false;  // Reset flag
+  
+  if (otaUrl.length() == 0) {
+    Serial.println("❌ OTA URL is empty");
+    return;
+  }
+  
+  Serial.println("🔄 Starting OTA update...");
+  Serial.printf("📥 Downloading: %s\n", otaUrl.c_str());
+  
+  // Blink LED rapidly to indicate OTA in progress
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(DETECT_LED, HIGH);
+    delay(100);
+    digitalWrite(DETECT_LED, LOW);
+    delay(100);
+  }
+  
+  // Publish OTA status to MQTT
+  char statusBuf[150];
+  snprintf(statusBuf, sizeof(statusBuf), 
+           "{\"status\":\"downloading\",\"version\":\"%s\",\"current\":\"%s\"}", 
+           otaVersion.c_str(), FIRMWARE_VERSION);
+  mqttClient.publish(MQTT_TOPIC_STATUS, statusBuf);
+  
+  // Keep LED on during download
+  digitalWrite(DETECT_LED, HIGH);
+  
+  // Perform HTTP OTA update
+  WiFiClient updateClient;
+  httpUpdate.setLedPin(DETECT_LED, LOW);  // LED on during update
+  httpUpdate.rebootOnUpdate(false);  // Don't auto-reboot, we'll do it manually
+  
+  t_httpUpdate_return ret = httpUpdate.update(updateClient, otaUrl);
+  
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("❌ OTA Failed! Error (%d): %s\n", 
+                    httpUpdate.getLastError(), 
+                    httpUpdate.getLastErrorString().c_str());
+      
+      // Publish failure status
+      snprintf(statusBuf, sizeof(statusBuf), 
+               "{\"status\":\"failed\",\"error\":\"%s\",\"code\":%d}", 
+               httpUpdate.getLastErrorString().c_str(),
+               httpUpdate.getLastError());
+      mqttClient.publish(MQTT_TOPIC_STATUS, statusBuf);
+      
+      // Blink LED to indicate failure
+      for (int i = 0; i < 10; i++) {
+        digitalWrite(DETECT_LED, HIGH);
+        delay(50);
+        digitalWrite(DETECT_LED, LOW);
+        delay(50);
+      }
+      break;
+      
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("ℹ️ No updates available");
+      snprintf(statusBuf, sizeof(statusBuf), 
+               "{\"status\":\"no_update\",\"version\":\"%s\"}", 
+               FIRMWARE_VERSION);
+      mqttClient.publish(MQTT_TOPIC_STATUS, statusBuf);
+      digitalWrite(DETECT_LED, LOW);
+      break;
+      
+    case HTTP_UPDATE_OK:
+      Serial.println("✅ OTA Update successful! Rebooting...");
+      
+      // Publish success status
+      snprintf(statusBuf, sizeof(statusBuf), 
+               "{\"status\":\"success\",\"version\":\"%s\",\"rebooting\":true}", 
+               otaVersion.c_str());
+      mqttClient.publish(MQTT_TOPIC_STATUS, statusBuf);
+      mqttClient.loop();  // Ensure message is sent
+      
+      // Keep LED on for 2 seconds before reboot
+      digitalWrite(DETECT_LED, HIGH);
+      delay(2000);
+      
+      // Reboot to apply new firmware
+      ESP.restart();
+      break;
+  }
+  
+  // Clear OTA variables
+  otaUrl = "";
+  otaVersion = "";
+}
+#endif

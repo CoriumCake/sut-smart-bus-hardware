@@ -60,4 +60,17 @@
 #define INTERVAL_30S  30000  // SD card save interval
 #define GPS_INTERVAL  500    // Fast GPS publish interval
 
+// ===========================================
+// OTA (Over-The-Air) Update Configuration
+// ===========================================
+
+// Enable/disable OTA updates
+#define OTA_ENABLED        true
+
+// MQTT topic for receiving OTA commands
+#define MQTT_TOPIC_OTA     "sut/ota/pm"
+
+// Current firmware version (update this when you upload new firmware)
+#define FIRMWARE_VERSION   "1.0.0"
+
 #endif // CONFIG_H

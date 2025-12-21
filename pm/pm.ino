@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <HTTPUpdate.h>  // For HTTP-based OTA updates
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
 #include <SPI.h>
@@ -10,6 +11,11 @@
 #include <RTClib.h>
 #include "DHT.h"
 #include "config.h"  // Include configuration file
+
+// OTA update state
+bool otaPending = false;
+String otaUrl = "";
+String otaVersion = "";
 
 // ================= CONFIGURATION =================
 // All settings are now in config.h
@@ -90,6 +96,7 @@ void setup() {
   MDNS.begin(web_name);
   WiFi.macAddress().toCharArray(bus_mac, sizeof(bus_mac));
   client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(mqttCallback);  // Set callback for OTA commands
  
   gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   pmsSerial.begin(9600, SERIAL_8N1, PMS_RX_PIN, PMS_TX_PIN);
@@ -122,6 +129,13 @@ void loop() {
   server.handleClient();
   maintainMqtt();
   client.loop();
+  
+  // Check if OTA update is pending
+  #ifdef OTA_ENABLED
+  if (otaPending && WiFi.status() == WL_CONNECTED) {
+    performOTA();
+  }
+  #endif
  
   // 1. งานทุก 5 วินาที: อัปเดต Serial และส่งข้อมูลไป Server (MQTT)
   if (millis() - last5s >= INTERVAL_5S) {
@@ -281,6 +295,13 @@ void maintainMqtt() {
  
     if (client.connect(bus_mac)) {
       Serial.println("[MQTT] Connected successfully!");
+      
+      // Subscribe to OTA topic
+      #ifdef OTA_ENABLED
+      client.subscribe(MQTT_TOPIC_OTA);
+      Serial.printf("📥 Subscribed to OTA topic: %s\n", MQTT_TOPIC_OTA);
+      Serial.printf("📌 Current firmware version: %s\n", FIRMWARE_VERSION);
+      #endif
     } else {
       int state = client.state();
       Serial.printf("[MQTT] Connection FAILED! Error code: %d\n", state);
@@ -319,3 +340,110 @@ void handleDelete() {
   SD.remove(filename);
   server.send(200, "text/plain", "Log File Deleted");
 }
+
+// =============================================================================
+// MQTT Callback for OTA Commands
+// =============================================================================
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.printf("📨 MQTT [%s]: %s\n", topic, message.c_str());
+  
+  // Check for OTA update command
+  #ifdef OTA_ENABLED
+  if (String(topic).indexOf("ota") >= 0) {
+    // Parse JSON using ArduinoJson (already included in this sketch)
+    StaticJsonDocument<256> otaDoc;
+    DeserializationError error = deserializeJson(otaDoc, message);
+    
+    if (!error && otaDoc.containsKey("url") && otaDoc.containsKey("version")) {
+      otaUrl = otaDoc["url"].as<String>();
+      otaVersion = otaDoc["version"].as<String>();
+      
+      Serial.printf("📥 OTA Update requested: v%s\n", otaVersion.c_str());
+      Serial.printf("📥 Firmware URL: %s\n", otaUrl.c_str());
+      
+      // Check if we need to update
+      bool forceUpdate = otaDoc["force"] | false;
+      if (otaVersion == FIRMWARE_VERSION && !forceUpdate) {
+        Serial.println("ℹ️ Already on this version, skipping update");
+        return;
+      }
+      
+      otaPending = true;
+    }
+  }
+  #endif
+}
+
+// =============================================================================
+// OTA (Over-The-Air) Update Functions
+// =============================================================================
+
+#ifdef OTA_ENABLED
+void performOTA() {
+  otaPending = false;
+  
+  if (otaUrl.length() == 0) {
+    Serial.println("❌ OTA URL is empty");
+    return;
+  }
+  
+  Serial.println("🔄 Starting OTA update...");
+  Serial.printf("📥 Downloading: %s\n", otaUrl.c_str());
+  
+  // Publish OTA status to MQTT
+  StaticJsonDocument<128> statusDoc;
+  statusDoc["status"] = "downloading";
+  statusDoc["version"] = otaVersion;
+  statusDoc["current"] = FIRMWARE_VERSION;
+  char statusBuf[128];
+  serializeJson(statusDoc, statusBuf);
+  client.publish(mqtt_topic, statusBuf);
+  
+  // Perform HTTP OTA update
+  WiFiClient updateClient;
+  httpUpdate.rebootOnUpdate(false);
+  
+  t_httpUpdate_return ret = httpUpdate.update(updateClient, otaUrl);
+  
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("❌ OTA Failed! Error (%d): %s\n", 
+                    httpUpdate.getLastError(), 
+                    httpUpdate.getLastErrorString().c_str());
+      
+      statusDoc.clear();
+      statusDoc["status"] = "failed";
+      statusDoc["error"] = httpUpdate.getLastErrorString();
+      serializeJson(statusDoc, statusBuf);
+      client.publish(mqtt_topic, statusBuf);
+      break;
+      
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("ℹ️ No updates available");
+      break;
+      
+    case HTTP_UPDATE_OK:
+      Serial.println("✅ OTA Update successful! Rebooting...");
+      
+      statusDoc.clear();
+      statusDoc["status"] = "success";
+      statusDoc["version"] = otaVersion;
+      statusDoc["rebooting"] = true;
+      serializeJson(statusDoc, statusBuf);
+      client.publish(mqtt_topic, statusBuf);
+      client.loop();
+      
+      delay(2000);
+      ESP.restart();
+      break;
+  }
+  
+  otaUrl = "";
+  otaVersion = "";
+}
+#endif
