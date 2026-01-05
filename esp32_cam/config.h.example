@@ -45,7 +45,7 @@
 #define MQTT_PORT_BACKUP   1883
 
 // MQTT Topics (usually don't need to change)
-#define MQTT_TOPIC_DETECTION    "sut/person-detection"
+#define MQTT_TOPIC_DETECTION    "bus/door/count"
 #define MQTT_TOPIC_STATUS       "sut/bus/ESP32-CAM-01/status"
 #define MQTT_TOPIC_RING         "sut/bus/ring"
 #define MQTT_CLIENT_ID          "BusCamStable"
